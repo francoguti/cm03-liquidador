@@ -274,6 +274,41 @@ const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const LSKEY = 'cm03_v11';
 
+// Regímenes del Convenio Multilateral
+var REGIMENES = [
+  {val:'2',  label:'Art. 2 — Régimen General',          directa:false},
+  {val:'6',  label:'Art. 6 — Construcción',              directa:true},
+  {val:'7',  label:'Art. 7 — Entidades financieras',     directa:true},
+  {val:'8',  label:'Art. 8 — Transporte interjurisd.',   directa:true},
+  {val:'9',  label:'Art. 9 — Seguros',                   directa:true},
+  {val:'10', label:'Art. 10 — Profes. liberales',        directa:true},
+  {val:'11', label:'Art. 11 — Industria',                directa:true},
+  {val:'12', label:'Art. 12 — Agropecuario',             directa:true},
+  {val:'13', label:'Art. 13 — Loteos y subdivisiones',   directa:true},
+  {val:'14', label:'Art. 14 — Inicio de actividades',    directa:true}
+];
+
+// NAES -> AFIP code exceptions (where they differ)
+var NAES_TO_AFIP = {
+  '012591':'012590','012599':'012590','012601':'012600','012609':'012600',
+  '091001':'091000','091002':'091000','091003':'091000','091009':'091000',
+  '192001':'192000','192002':'192000','201191':'201190','201199':'201190',
+  '329091':'329090','329099':'329090','352021':'352020','352022':'352020',
+  '451111':'451110','451112':'451110','451191':'451190','451192':'451190',
+  '451211':'451210','451212':'451210','451291':'451290','451292':'451290',
+  '462111':'462110','462112':'462110','466111':'466110','466112':'466110',
+  '466119':'466110','466122':'466129','466123':'466129',
+  '473001':'473000','473002':'473000','473003':'473000','473009':'473000',
+  '476111':'476110','476112':'476110','476121':'476120','476122':'476120',
+  '477311':'477310','477312':'477310','477461':'477460','477462':'477460',
+  '477469':'477460','620101':'620100','620102':'620100','620103':'620100',
+  '620104':'620100','631201':'631200','631202':'631200',
+  '780001':'780000','780009':'780000','791101':'791100','791102':'791100',
+  '791201':'791200','791202':'791200','822001':'822000','822009':'822000',
+  '829901':'829900','829909':'829900','949990':'949930'
+};
+function naesToAfip(code){ return NAES_TO_AFIP[code]||code; }
+
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function fmt(n){ return Number(n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -335,15 +370,25 @@ function getSAFForPeriod(client, jCode, periodKey){
   return r.aFavorContrib > 0.005 ? r.aFavorContrib : 0;
 }
 
-function getBaseAct(bd, coef, isArt14){
+function getBaseAct(bd, coef, regimen){
   // Manual override wins
   if (bd.manual !== undefined && bd.manual !== '') return parseFloat(bd.manual)||0;
   var importado    = parseFloat(bd.importado)||0;
-  var ajustePrevio = parseFloat(bd.ajustePrevio)||0;  // before coef: removes non-taxable items
-  var ajuste       = parseFloat(bd.ajuste)||0;         // after coef: redistribution between jurisdictions
+  var ajustePrevio = parseFloat(bd.ajustePrevio)||0;
+  var ajuste       = parseFloat(bd.ajuste)||0;
   var basePreCoef  = importado + ajustePrevio;
-  var base = isArt14 ? basePreCoef : basePreCoef * coef;
+  // Art.2: apply coeficiente. All others (Art.6-14): direct assignment
+  var isDirecta = regimen !== '2';
+  var base = isDirecta ? basePreCoef : basePreCoef * coef;
   return base + ajuste;
+}
+
+// Helper: get regimen string for a jurisdiction
+function getRegimen(jInfo){
+  if (!jInfo) return '2';
+  if (jInfo.regimen) return String(jInfo.regimen);
+  if (jInfo.art14) return '14';
+  return '2';
 }
 
 function calcResult(client, jCode, periodKey){
@@ -353,13 +398,14 @@ function calcResult(client, jCode, periodKey){
 
   var jInfo = (client.jurisdicciones||[]).filter(function(j){ return j.code===jCode; })[0];
   var coef = parseFloat(jInfo&&jInfo.coef)||0;
-  var isArt14 = !!(jInfo&&jInfo.art14);
+  var regimen = getRegimen(jInfo);
+  var isDirecta = regimen !== '2';
 
   var base = 0, anticipo = 0;
   (client.actividades||[]).forEach(function(act){
     var key = act.id + '_' + jCode;
     var bd = p.bases[key]||{};
-    var b = getBaseAct(bd, coef, isArt14);
+    var b = getBaseAct(bd, coef, regimen);
     var alic = parseFloat((p.alicuotas&&p.alicuotas[key]) || act.defaultAlic || 0);
     base += b;
     anticipo += b * alic / 100;
@@ -408,7 +454,7 @@ function renderSB(){
     h += '<div class="prof-item" onclick="openM(\'coef\')">';
     h += '<div class="prof-item-top"><span class="prof-item-title">Coeficientes</span>';
     h += '<span class="prof-badge '+(coefOk?'ok':'warn')+'">'+(coefOk?'1.0000':'&#9888; err')+'</span></div>';
-    var clines = juris.filter(function(j){ return !j.art14; }).map(function(j){
+    var clines = juris.filter(function(j){ return getRegimen(j)==='2'; }).map(function(j){
       return prov(j.code).cod+' '+(parseFloat(j.coef||0)).toFixed(4);
     }).join(' &middot; ');
     h += '<div class="prof-item-sub">'+(clines||'Sin configurar')+' &mdash; Editar</div></div>';
@@ -655,7 +701,8 @@ function renderMain(){
     var pv2 = prov(j.code);
     h += '<div class="jsrow">';
     h += '<div class="jsc lft"><span class="jur-cod">'+pv2.cod+'</span><span class="jur-nm">'+esc(pv2.n)+'</span>';
-    if (j.art14) h += ' <span class="pill art14" style="margin-left:4px">Art.14</span>';
+    var rj=getRegimen(j);
+    if (rj!=='2') h += ' <span class="pill art14" style="margin-left:4px">Art.'+rj+'</span>';
     h += '</div>';
     h += '<div class="jsc">$'+fmt(r.base)+'</div>';
     h += '<div class="jsc">$'+fmt(r.anticipo)+'</div>';
@@ -691,7 +738,8 @@ function renderMain(){
   juris.forEach(function(j){
     var pv2 = prov(j.code);
     var coef = parseFloat(j.coef)||0;
-    var isArt14 = !!j.art14;
+    var regJ = getRegimen(j);
+    var isDirecta = regJ !== '2';
     var jBase=0, jAnticipo=0;
 
     acts.forEach(function(act){
@@ -700,7 +748,7 @@ function renderMain(){
       var alic = parseFloat((p.alicuotas&&p.alicuotas[key])||act.defaultAlic||0);
       var imp = parseFloat(bd.importado)||0;
       var adj = parseFloat(bd.ajuste)||0;
-      var baseAct = getBaseAct(bd, coef, isArt14);
+      var baseAct = getBaseAct(bd, coef, regJ);
       var ant = baseAct * alic / 100;
       jBase += baseAct; jAnticipo += ant;
 
@@ -710,7 +758,7 @@ function renderMain(){
       h += '<tr>';
       h += '<td><span class="jur-cod">'+pv2.cod+'</span>'+esc(pv2.n)+'</td>';
       h += '<td><span class="naiib">'+(act.naiib||'—')+'</span>'+esc(act.nombre)+'</td>';
-      h += '<td><span class="pill '+(isArt14?'art14':'art2')+'">'+(isArt14?'Art.14':'Art.2')+'</span></td>';
+      var rInfo=REGIMENES.filter(function(r){return r.val===regJ;})[0]; h += '<td><span class="pill '+(regJ==='2'?'art2':'art14')+'">Art.'+regJ+'</span></td>';
       // Base importada (readonly display) — before coef
       h += '<td class="mn" style="color:var(--ink3)">$'+fmt(imp)+'</td>';
 
@@ -779,7 +827,7 @@ function renderMain(){
   h += '</div>';
 
   h += '<div class="export-bar"><div class="export-lbl">'+esc(c.razon)+' &middot; CUIT '+esc(c.cuit)+' &middot; '+MESES[S.mes-1]+' '+S.anio+'</div>';
-  h += '<div class="btn-row"><button class="btn btn-g btn-sm" onclick="doCSV()">&#8595; CSV</button>';
+  h += '<div class="btn-row"><button class="btn btn-g btn-sm" onclick="doCSV()">&#8595; CSV</button><button class="btn btn-g btn-sm" onclick="doSIFERE()">&#8595; SIFERE</button>';
   h += '<button class="btn btn-p btn-sm" onclick="doPDF()">&#8595; PDF</button></div></div>';
 
   document.getElementById('ct').innerHTML = h;
@@ -1080,18 +1128,21 @@ function savePVMap(){
 function mCoef(){
   var c=getCl(); if(!c) return;
   var juris=c.jurisdicciones||[];
-  var sumA2=juris.filter(function(j){ return !j.art14; }).reduce(function(s,j){ return s+(parseFloat(j.coef)||0); },0);
+  var sumA2=juris.filter(function(j){ return getRegimen(j)==='2'; }).reduce(function(s,j){ return s+(parseFloat(j.coef)||0); },0);
   var ok=Math.abs(sumA2-1)<0.002;
   var rows=juris.map(function(j){
     var pv2=prov(j.code);
+    var curReg=getRegimen(j);
+    var regOpts=REGIMENES.map(function(r){
+      return '<option value="'+r.val+'"'+(r.val===curReg?' selected':'')+'>'+r.label+'</option>';
+    }).join('');
+    var isDir=(curReg!=='2');
     return '<tr>'
       +'<td><span class="jur-cod">'+pv2.cod+'</span>'+esc(pv2.n)+'</td>'
-      +'<td><select class="fi" style="font-size:12px;width:100px" onchange="setJArt(\''+j.code+'\',this.value)">'
-      +'<option value="2"'+(j.art14?'':' selected')+'>Art. 2</option>'
-      +'<option value="14"'+(j.art14?' selected':'')+'>Art. 14</option></select></td>'
+      +'<td><select class="fi" style="font-size:12px;width:280px" onchange="setJRegimen(\''+j.code+'\',this.value)">'+regOpts+'</select></td>'
       +'<td><input class="t-inp" style="width:90px" type="number" step="0.0001" min="0" max="1"'
       +' id="coef-'+j.code+'" value="'+(j.coef||'')+'" placeholder="0.0000"'
-      +' oninput="setJCoef(\''+j.code+'\',this.value)"></td>'
+      +(isDir?' disabled':'')+' oninput="setJCoef(\''+j.code+'\',this.value)"></td>'
       +'</tr>';
   }).join('');
   modal('<h2>Coeficientes '+S.anio+'</h2>'
@@ -1108,17 +1159,32 @@ function setJCoef(code,val){
   var c=getCl(); if(!c) return;
   var j=(c.jurisdicciones||[]).filter(function(x){ return x.code===code; })[0]; if(!j) return;
   j.coef=parseFloat(val)||0; save();
-  var juris=c.jurisdicciones||[];
-  var sum=juris.filter(function(x){ return !x.art14; }).reduce(function(s,x){ return s+(parseFloat(x.coef)||0); },0);
+  var jurisAll=c.jurisdicciones||[];
+  var sum=jurisAll.filter(function(x){ return getRegimen(x)==='2'; }).reduce(function(s,x){ return s+(parseFloat(x.coef)||0); },0);
   var ok=Math.abs(sum-1)<0.002;
   var el=document.getElementById('coef-sum');
   if(el){ el.textContent=sum.toFixed(4); el.className=ok?'coef-ok':'coef-bad'; }
 }
 
 function setJArt(code,val){
+  // Legacy - kept for compatibility
+  setJRegimen(code, val==='14'?'14':'2');
+}
+function setJRegimen(code,val){
   var c=getCl(); if(!c) return;
   var j=(c.jurisdicciones||[]).filter(function(x){ return x.code===code; })[0]; if(!j) return;
-  j.art14=(val==='14'); save();
+  j.regimen=val;
+  j.art14=(val==='14');  // keep legacy flag in sync
+  save();
+  // Disable/enable coef input
+  var el=document.getElementById('coef-'+code);
+  if(el){ el.disabled=(val!=='2'); el.title=(val!=='2'?'No aplica coeficiente en este régimen':''); }
+  // Update sum display
+  var jurisAll=c.jurisdicciones||[];
+  var sum=jurisAll.filter(function(x){return getRegimen(x)==='2';}).reduce(function(s,x){return s+(parseFloat(x.coef)||0);},0);
+  var ok=Math.abs(sum-1)<0.002;
+  var el2=document.getElementById('coef-sum');
+  if(el2){el2.textContent=sum.toFixed(4);el2.className=ok?'coef-ok':'coef-bad';}
 }
 
 function mDed(){
@@ -1458,6 +1524,8 @@ function processFile(file){
       var c=getCl(); if(!c) return;
       var p=getPeriod(c);
       p.pvTotales=result.pvTotales;
+      p.pvGravado=result.pvGravado||{};
+      p.pvExento=result.pvExento||{};
       if(result.mes&&result.anio){ S.mes=result.mes; S.anio=result.anio; }
       var pvMap=c.pvMap||{};
       var actTotals={};
@@ -1507,7 +1575,7 @@ function parseNum(s) {
 
 function parseVentas(wb) {
   // Try to detect format from first sheet
-  var pvTotales={}, mes=null, anio=null;
+  var pvTotales={}, pvGravado={}, pvExento={}, mes=null, anio=null;
 
   // Check if it's a real xlsx with meaningful headers (Libro IVA)
   var sheet0 = wb.Sheets[wb.SheetNames[0]];
@@ -1544,12 +1612,14 @@ function parseVentas(wb) {
       // Libro IVA: NC rows already have negative values
       var total = neto + exento;
       pvTotales[pv]=(pvTotales[pv]||0)+total;
+      pvGravado[pv]=(pvGravado[pv]||0)+neto;
+      pvExento[pv]=(pvExento[pv]||0)+exento;
       if (!mes && row[colFecha]) {
         var d=new Date(row[colFecha]);
         if (!isNaN(d.getTime())){ mes=d.getMonth()+1; anio=d.getFullYear(); }
       }
     }
-    return {pvTotales:pvTotales,mes:mes,anio:anio};
+    return {pvTotales:pvTotales,pvGravado:pvGravado,pvExento:pvExento,mes:mes,anio:anio};
   }
 
   // ── CSV formats: re-read as raw text ──
@@ -1581,6 +1651,8 @@ function parseVentas(wb) {
     // NC types: subtract
     if (NC_TIPOS[tipoVal]) total2 = -total2;
     pvTotales[pv2]=(pvTotales[pv2]||0)+total2;
+    pvGravado[pv2]=(pvGravado[pv2]||0)+(NC_TIPOS[tipoVal]?-neto2:neto2);
+    pvExento[pv2]=(pvExento[pv2]||0)+(NC_TIPOS[tipoVal]?-exento2:exento2);
     if (!mes) {
       // Try fecha column, or scan first few fields for a date-like value
       var dSrc2 = colFecha2>=0 ? String(row2[colFecha2]||'') : '';
@@ -1602,10 +1674,125 @@ function parseVentas(wb) {
   Object.keys(pvTotales).forEach(function(pv){
     pvTotales[pv] = Math.round(pvTotales[pv]*100)/100;
   });
-  return {pvTotales:pvTotales,mes:mes,anio:anio};
+  return {pvTotales:pvTotales,pvGravado:pvGravado,pvExento:pvExento,mes:mes,anio:anio};
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
+// ─── SIFERE Excel Exporter ───────────────────────────────────────────────────
+function doSIFERE(){
+  var c=getCl(); if(!c) return;
+  var p=getPeriod(c);
+  var juris=c.jurisdicciones||[];
+  var acts=c.actividades||[];
+  var pvMap=c.pvMap||{};
+  var pvGrav=p.pvGravado||{};
+  var pvExento=p.pvExento||{};
+
+  // Helper to compute per-activity gravado/exento for a jurisdiction
+  function getActGravado(actId){
+    var tot=0;
+    Object.keys(pvMap).forEach(function(pv){ if(pvMap[pv]===actId) tot+=(pvGrav[pv]||0); });
+    return Math.max(0,tot);
+  }
+  function getActExento(actId){
+    var tot=0;
+    Object.keys(pvMap).forEach(function(pv){ if(pvMap[pv]===actId) tot+=(pvExento[pv]||0); });
+    return Math.max(0,tot);
+  }
+  function getActNoGrav(actId, jCode){
+    // No gravados IIBB = ajustePrevio (manual correction before coef)
+    var bd=(p.bases&&p.bases[actId+'_'+jCode])||{};
+    var ajPrev=parseFloat(bd.ajustePrevio)||0;
+    return ajPrev<0?Math.abs(ajPrev):0;
+  }
+
+  // Build workbook
+  var wb={SheetNames:[],Sheets:{}};
+
+  // ── CABECERA sheet ──
+  var cuitClean=c.cuit.replace(/-/g,'');
+  var cuitFormatted=cuitClean.length===11
+    ? cuitClean.slice(0,2)+'-'+cuitClean.slice(2,10)+'-'+cuitClean.slice(10)
+    : c.cuit;
+  var periodoStr=S.anio+'-'+(S.mes<10?'0':'')+S.mes;
+  var cab=XLSX.utils.aoa_to_sheet([
+    [],[],
+    [null,'CUIT (XX-XXXXXXXX-X): ', cuitFormatted],
+    [null,'Período (AAAA-MM):', periodoStr]
+  ]);
+  wb.SheetNames.push('CABECERA');
+  wb.Sheets['CABECERA']=cab;
+
+  // ── One sheet per jurisdiction ──
+  juris.forEach(function(j){
+    var pv2=prov(j.code);
+    var regimen=getRegimen(j);
+    var isDirecta=regimen!=='2';
+    var coef=parseFloat(j.coef)||0;
+
+    // Compute totals for this jurisdiction
+    var totalGravado=0, totalExento=0, totalNoGrav=0;
+    acts.forEach(function(act){
+      var bd=(p.bases&&p.bases[act.id+'_'+j.code])||{};
+      var baseAct=getBaseAct(bd,coef,regimen);
+      // Gravado = baseAct minus exento portion
+      // Exento = exento portion of the base (after coef for Art.2)
+      var grav=getActGravado(act.id);
+      var exen=getActExento(act.id);
+      var noGrav=getActNoGrav(act.id,j.code);
+      if(isDirecta){
+        totalGravado+=grav;
+        totalExento+=exen;
+        totalNoGrav+=noGrav;
+      } else {
+        totalGravado+=grav*coef;
+        totalExento+=exen*coef;
+        totalNoGrav+=noGrav*coef;
+      }
+    });
+
+    // Build rows
+    var sheetData=[
+      [],[], // rows 1-2 empty
+      [null,'Coeficiente Distribución:', isDirecta ? 0 : coef],
+      [null,'Artículo 14:', isDirecta ? 'S' : 'N'],
+      [],
+      [null,'Ingresos Gravados:', Math.round(totalGravado*100)/100],
+      [null,'Ingresos No Gravados:', Math.round(totalNoGrav*100)/100],
+      [null,'Ingresos Exentos:', Math.round(totalExento*100)/100],
+      [],[],
+      [null,'Régimen / Artículo','Cód. Actividad',' Tratamiento Fiscal','Base Imponible',' Ajuste ',' Alícuota']
+    ];
+
+    acts.forEach(function(act){
+      var key=act.id+'_'+j.code;
+      var bd=(p.bases&&p.bases[key])||{};
+      var baseAct=getBaseAct(bd,coef,regimen);
+      var ajuste=parseFloat(bd.ajuste)||0;
+      var alic=parseFloat((p.alicuotas&&p.alicuotas[key])||act.defaultAlic||0);
+      var naesCode=naesToAfip(act.naiib||'0');
+      var regimenNum=regimen==='14'?14:parseInt(regimen)||2;
+      sheetData.push([
+        null,
+        regimenNum,
+        parseInt(naesCode)||0,
+        0,  // Tratamiento Fiscal = 0
+        Math.round(baseAct*100)/100,
+        Math.round(ajuste*100)/100,
+        alic
+      ]);
+    });
+
+    var ws=XLSX.utils.aoa_to_sheet(sheetData);
+    var sheetName=pv2.cod;
+    wb.SheetNames.push(sheetName);
+    wb.Sheets[sheetName]=ws;
+  });
+
+  XLSX.writeFile(wb,'CM03_SIFERE_'+c.cuit.replace(/-/g,'')+'_'+periodoStr+'.xlsx');
+  toast('✓ Excel SIFERE exportado — '+juris.length+' jurisdicción(es)');
+}
+
 function doCSV(){
   var c=getCl(); if(!c) return;
   var juris=c.jurisdicciones||[];
