@@ -1706,52 +1706,41 @@ function doSIFERE(){
     return ajPrev<0?Math.abs(ajPrev):0;
   }
 
-  // Build workbook
-  var wb={SheetNames:[],Sheets:{}};
-
-  // ── CABECERA sheet ──
+  // Shared data
   var cuitClean=c.cuit.replace(/-/g,'');
   var cuitFormatted=cuitClean.length===11
     ? cuitClean.slice(0,2)+'-'+cuitClean.slice(2,10)+'-'+cuitClean.slice(10)
     : c.cuit;
   var periodoStr=S.anio+'-'+(S.mes<10?'0':'')+S.mes;
-  var cab=XLSX.utils.aoa_to_sheet([
-    [],[],
-    [null,'CUIT (XX-XXXXXXXX-X): ', cuitFormatted],
-    [null,'Período (AAAA-MM):', periodoStr]
-  ]);
-  wb.SheetNames.push('CABECERA');
-  wb.Sheets['CABECERA']=cab;
 
-  // ── One sheet per jurisdiction ──
+  // ── One file per jurisdiction ──
   juris.forEach(function(j){
     var pv2=prov(j.code);
     var regimen=getRegimen(j);
     var isDirecta=regimen!=='2';
     var coef=parseFloat(j.coef)||0;
 
-    // Compute totals for this jurisdiction
+    // Totals for this jurisdiction
     var totalGravado=0, totalExento=0, totalNoGrav=0;
     acts.forEach(function(act){
-      var bd=(p.bases&&p.bases[act.id+'_'+j.code])||{};
-      var baseAct=getBaseAct(bd,coef,regimen);
-      // Gravado = baseAct minus exento portion
-      // Exento = exento portion of the base (after coef for Art.2)
       var grav=getActGravado(act.id);
       var exen=getActExento(act.id);
       var noGrav=getActNoGrav(act.id,j.code);
       if(isDirecta){
-        totalGravado+=grav;
-        totalExento+=exen;
-        totalNoGrav+=noGrav;
+        totalGravado+=grav; totalExento+=exen; totalNoGrav+=noGrav;
       } else {
-        totalGravado+=grav*coef;
-        totalExento+=exen*coef;
-        totalNoGrav+=noGrav*coef;
+        totalGravado+=grav*coef; totalExento+=exen*coef; totalNoGrav+=noGrav*coef;
       }
     });
 
-    // Build rows
+    // CABECERA sheet
+    var cab=XLSX.utils.aoa_to_sheet([
+      [],[],
+      [null,'CUIT (XX-XXXXXXXX-X): ', cuitFormatted],
+      [null,'Período (AAAA-MM):', periodoStr]
+    ]);
+
+    // Jurisdiction sheet
     var sheetData=[
       [],[], // rows 1-2 empty
       [null,'Coeficiente Distribución:', isDirecta ? 0 : coef],
@@ -1763,7 +1752,6 @@ function doSIFERE(){
       [],[],
       [null,'Régimen / Artículo','Cód. Actividad',' Tratamiento Fiscal','Base Imponible',' Ajuste ',' Alícuota']
     ];
-
     acts.forEach(function(act){
       var key=act.id+'_'+j.code;
       var bd=(p.bases&&p.bases[key])||{};
@@ -1776,7 +1764,7 @@ function doSIFERE(){
         null,
         regimenNum,
         parseInt(naesCode)||0,
-        0,  // Tratamiento Fiscal = 0
+        0,
         Math.round(baseAct*100)/100,
         Math.round(ajuste*100)/100,
         alic
@@ -1784,13 +1772,16 @@ function doSIFERE(){
     });
 
     var ws=XLSX.utils.aoa_to_sheet(sheetData);
-    var sheetName=pv2.cod;
-    wb.SheetNames.push(sheetName);
-    wb.Sheets[sheetName]=ws;
+    var wb={SheetNames:['CABECERA',pv2.cod], Sheets:{}};
+    wb.Sheets['CABECERA']=cab;
+    wb.Sheets[pv2.cod]=ws;
+
+    // Filename: CM03_SIFERE_CUIT_PERIODO_COD.xlsx
+    var fname='CM03_SIFERE_'+c.cuit.replace(/-/g,'')+'_'+periodoStr+'_'+pv2.cod+'.xlsx';
+    XLSX.writeFile(wb,fname);
   });
 
-  XLSX.writeFile(wb,'CM03_SIFERE_'+c.cuit.replace(/-/g,'')+'_'+periodoStr+'.xlsx');
-  toast('✓ Excel SIFERE exportado — '+juris.length+' jurisdicción(es)');
+  toast('✓ '+juris.length+' archivo(s) SIFERE generados — uno por jurisdicción');
 }
 
 function doCSV(){
