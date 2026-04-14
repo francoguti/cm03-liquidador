@@ -1740,19 +1740,45 @@ function doSIFERE(){
       [null,'Período (AAAA-MM):', periodoStr]
     ]);
 
-    // Jurisdiction sheet
-    var sheetData=[
-      [],[], // rows 1-2 empty
-      [null,'Coeficiente Distribución:', isDirecta ? 0 : coef],
-      [null,'Artículo 14:', isDirecta ? 'S' : 'N'],
-      [],
-      [null,'Ingresos Gravados:', Math.round(totalGravado*100)/100],
-      [null,'Ingresos No Gravados:', Math.round(totalNoGrav*100)/100],
-      [null,'Ingresos Exentos:', Math.round(totalExento*100)/100],
-      [],[],
-      [null,'Régimen / Artículo','Cód. Actividad',' Tratamiento Fiscal','Base Imponible',' Ajuste ',' Alícuota']
-    ];
-    acts.forEach(function(act){
+    // Build jurisdiction worksheet cell by cell matching SIFERE model exactly
+    // Col mapping: A=0, B=1, C=2, D=3, E=4, F=5, G=6
+    function cellRef(r,c){ return XLSX.utils.encode_cell({r:r,c:c}); }
+    function nCell(v,fmt){ return {v:v,t:'n',z:fmt||'General'}; }
+    function sCell(v){ return {v:v,t:'s'}; }
+
+    var ws={'!ref':'B3:G'+(12+acts.length)};
+
+    // Row 3 (index 2): Coeficiente
+    ws[cellRef(2,1)]=sCell('Coeficiente Distribución:');
+    ws[cellRef(2,2)]=nCell(isDirecta?0:coef,'0.0000');
+
+    // Row 4 (index 3): Artículo 14
+    ws[cellRef(3,1)]=sCell('Artículo 14:');
+    ws[cellRef(3,2)]=sCell(isDirecta?'S':'N');
+
+    // Row 6 (index 5): Ingresos Gravados
+    ws[cellRef(5,1)]=sCell('Ingresos Gravados:');
+    ws[cellRef(5,2)]=nCell(Math.round(totalGravado*100)/100,'#,##0.00');
+
+    // Row 7 (index 6): Ingresos No Gravados
+    ws[cellRef(6,1)]=sCell('Ingresos No Gravados:');
+    ws[cellRef(6,2)]=nCell(Math.round(totalNoGrav*100)/100,'#,##0.00');
+
+    // Row 8 (index 7): Ingresos Exentos
+    ws[cellRef(7,1)]=sCell('Ingresos Exentos:');
+    ws[cellRef(7,2)]=nCell(Math.round(totalExento*100)/100,'#,##0.00');
+
+    // Row 11 (index 10): Header
+    ws[cellRef(10,1)]=sCell('Régimen / Artículo');
+    ws[cellRef(10,2)]=sCell('Cód. Actividad');
+    ws[cellRef(10,3)]=sCell(' Tratamiento Fiscal');
+    ws[cellRef(10,4)]=sCell('Base Imponible');
+    ws[cellRef(10,5)]=sCell(' Ajuste ');
+    ws[cellRef(10,6)]=sCell(' Alícuota');
+
+    // Row 12+ (index 11+): Activity rows
+    acts.forEach(function(act,idx){
+      var r=11+idx;
       var key=act.id+'_'+j.code;
       var bd=(p.bases&&p.bases[key])||{};
       var baseAct=getBaseAct(bd,coef,regimen);
@@ -1760,18 +1786,15 @@ function doSIFERE(){
       var alic=parseFloat((p.alicuotas&&p.alicuotas[key])||act.defaultAlic||0);
       var naesCode=naesToAfip(act.naiib||'0');
       var regimenNum=regimen==='14'?14:parseInt(regimen)||2;
-      sheetData.push([
-        null,
-        regimenNum,
-        parseInt(naesCode)||0,
-        0,
-        Math.round(baseAct*100)/100,
-        Math.round(ajuste*100)/100,
-        alic
-      ]);
+      ws[cellRef(r,1)]=nCell(regimenNum);
+      ws[cellRef(r,2)]=nCell(parseInt(naesCode)||0);
+      ws[cellRef(r,3)]=nCell(0);
+      ws[cellRef(r,4)]=nCell(Math.round(baseAct*100)/100,'#,##0.00');
+      ws[cellRef(r,5)]=nCell(Math.round(ajuste*100)/100,'#,##0.00');
+      ws[cellRef(r,6)]=nCell(alic);
     });
+    ws['!ref']='B3:G'+(12+acts.length);
 
-    var ws=XLSX.utils.aoa_to_sheet(sheetData);
     var wb={SheetNames:['CABECERA',pv2.cod], Sheets:{}};
     wb.Sheets['CABECERA']=cab;
     wb.Sheets[pv2.cod]=ws;
